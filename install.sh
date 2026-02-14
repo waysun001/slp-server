@@ -130,6 +130,11 @@ setup_cert() {
     return 0
 }
 
+# 获取所有公网 IP
+get_public_ips() {
+    ip addr | grep "inet " | grep -v "127.0.0.1" | grep -v "10\." | grep -v "172\.16\." | grep -v "192\.168\." | awk '{print $2}' | cut -d'/' -f1 | sort -u
+}
+
 # 创建配置
 create_config() {
     local domain="$1"
@@ -151,6 +156,32 @@ create_config() {
             -keyout "$key_path" -out "$cert_path" \
             -subj "/CN=${domain:-slp-server}" \
             -addext "subjectAltName=DNS:${domain:-localhost},IP:0.0.0.0" 2>/dev/null
+    fi
+    
+    # 获取所有公网 IP
+    local ips=($(get_public_ips))
+    local ip_count=${#ips[@]}
+    
+    log_info "检测到 ${ip_count} 个公网 IP"
+    
+    # 生成 tokens 配置
+    local tokens_config=""
+    local i=1
+    for ip in "${ips[@]}"; do
+        local ip_token=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
+        tokens_config="${tokens_config}
+    - name: \"ip${i}\"
+      token: \"${ip_token}\"
+      outbound_ip: \"${ip}\""
+        i=$((i + 1))
+    done
+    
+    # 如果没有检测到 IP，使用默认配置
+    if [[ -z "$tokens_config" ]]; then
+        tokens_config="
+    - name: \"default\"
+      token: \"${token}\"
+      outbound_ip: \"\""
     fi
     
     cat > "${CONFIG_DIR}/config.yaml" << EOF
@@ -176,10 +207,7 @@ tls:
   key: "${key_path}"
 
 auth:
-  tokens:
-    - name: "default"
-      token: "${token}"
-      bandwidth: 0
+  tokens:${tokens_config}
 
 log:
   level: "info"
@@ -264,30 +292,41 @@ show_info() {
     local port="${3:-443}"
     local ip=$(curl -s4 ip.sb || curl -s4 ifconfig.me || echo "YOUR_SERVER_IP")
     
+    # 获取所有 IP 和 token
+    local ips=($(get_public_ips))
+    
     echo ""
     echo "=============================================="
     echo -e "${GREEN}SLP Server 安装完成！${NC}"
     echo "=============================================="
     echo ""
     echo "服务器信息:"
-    echo "  IP:     ${ip}"
+    echo "  主 IP:  ${ip}"
     echo "  域名:   ${domain:-未设置}"
     echo "  端口:   ${port} (QUIC), $((port + 1)) (WebSocket)"
-    echo "  Token:  ${token}"
     echo ""
-    echo "客户端配置:"
-    echo "  server:    ${domain:-$ip}"
-    echo "  port:      ${port}"
-    echo "  transport: quic"
-    echo "  token:     ${token}"
+    echo "检测到 ${#ips[@]} 个出口 IP，已自动配置:"
+    echo ""
+    
+    # 从配置文件读取 token
+    local i=1
+    for out_ip in "${ips[@]}"; do
+        local tok=$(grep -A2 "name: \"ip${i}\"" ${CONFIG_DIR}/config.yaml | grep "token:" | awk '{print $2}' | tr -d '"')
+        echo "  出口 ${i}: ${out_ip}"
+        echo "    Token: ${tok}"
+        echo ""
+        i=$((i + 1))
+    done
+    
+    echo "客户端连接命令:"
+    echo "  slp-client -s ${domain:-$ip} -p ${port} -t <TOKEN> -insecure"
     echo ""
     echo "管理命令:"
     echo "  状态:  systemctl status ${SERVICE_NAME}"
     echo "  日志:  journalctl -u ${SERVICE_NAME} -f"
     echo "  重启:  systemctl restart ${SERVICE_NAME}"
-    echo "  停止:  systemctl stop ${SERVICE_NAME}"
+    echo "  配置:  nano ${CONFIG_DIR}/config.yaml"
     echo ""
-    echo "配置文件: ${CONFIG_DIR}/config.yaml"
     echo "=============================================="
 }
 
