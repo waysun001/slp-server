@@ -1,6 +1,6 @@
 # Binaries
-slp-server
-slp-server-*
+/slp-server
+/slp-server-*
 *.exe
 
 # IDE
