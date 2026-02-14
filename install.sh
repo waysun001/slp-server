@@ -35,7 +35,7 @@ INSTALL_DIR="/usr/local/bin"
 CONFIG_DIR="/etc/slp"
 SERVICE_NAME="slp-server"
 BINARY_NAME="slp-server"
-GITHUB_REPO="smartlink/slp-server"
+GITHUB_REPO="waysun001/slp-server"
 VERSION="${VERSION:-latest}"
 
 # 生成随机 token
@@ -66,49 +66,43 @@ install_deps() {
 
 # 下载二进制
 download_binary() {
-    log_info "下载 SLP Server..."
-    
-    local url
-    if [[ "$VERSION" == "latest" ]]; then
-        url="https://github.com/${GITHUB_REPO}/releases/latest/download/${BINARY_NAME}-linux-${ARCH}"
-    else
-        url="https://github.com/${GITHUB_REPO}/releases/download/${VERSION}/${BINARY_NAME}-linux-${ARCH}"
-    fi
-    
-    # 如果 GitHub 下载失败，尝试从备用地址
-    if ! wget -q --show-progress -O "${INSTALL_DIR}/${BINARY_NAME}" "$url" 2>/dev/null; then
-        log_warn "GitHub 下载失败，尝试本地编译..."
-        compile_from_source
-        return
-    fi
-    
-    chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
-    log_info "已安装到 ${INSTALL_DIR}/${BINARY_NAME}"
+    # 直接从源码编译（更可靠）
+    compile_from_source
 }
 
 # 从源码编译
 compile_from_source() {
     log_info "从源码编译..."
     
+    # 检查 Git
+    if ! check_command git; then
+        apt-get install -y -qq git || yum install -y -q git || dnf install -y -q git
+    fi
+    
     # 检查 Go
     if ! check_command go; then
-        log_info "安装 Go..."
-        wget -q https://go.dev/dl/go1.21.6.linux-${ARCH}.tar.gz
+        log_info "安装 Go 1.21..."
+        wget -q --show-progress https://go.dev/dl/go1.21.6.linux-${ARCH}.tar.gz -O /tmp/go.tar.gz
         rm -rf /usr/local/go
-        tar -C /usr/local -xzf go1.21.6.linux-${ARCH}.tar.gz
-        rm go1.21.6.linux-${ARCH}.tar.gz
+        tar -C /usr/local -xzf /tmp/go.tar.gz
+        rm /tmp/go.tar.gz
         export PATH=$PATH:/usr/local/go/bin
+        echo 'export PATH=$PATH:/usr/local/go/bin' >> /etc/profile
     fi
     
     # 克隆并编译
     local tmp_dir=$(mktemp -d)
     cd "$tmp_dir"
+    log_info "克隆仓库..."
     git clone --depth 1 "https://github.com/${GITHUB_REPO}.git" .
+    log_info "编译中..."
+    go mod tidy
     CGO_ENABLED=0 go build -ldflags "-s -w" -o "${INSTALL_DIR}/${BINARY_NAME}" ./cmd/slp-server/
-    cd -
+    cd /
     rm -rf "$tmp_dir"
     
-    log_info "编译完成"
+    chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
+    log_info "编译完成: ${INSTALL_DIR}/${BINARY_NAME}"
 }
 
 # 申请证书
