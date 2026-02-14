@@ -197,7 +197,7 @@ func (s *WebSocketServer) proxyConnection(wsConn *websocket.Conn, addr string, p
 	targetAddr := addr + ":" + string(rune(port>>8)) + string(rune(port&0xff))
 	
 	// 使用 proxy 包的 TCP 代理
-	p, err := proxy.NewStreamProxy(&wsConnWrapper{conn: wsConn, mu: &s.mu}, addr, port)
+	p, err := proxy.NewStreamProxy(&wsConnWrapper{conn: wsConn, mu: &s.mu}, addr, port, "")
 	if err != nil {
 		log.Printf("Failed to create proxy: %v", err)
 		return

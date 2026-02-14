@@ -6,7 +6,6 @@ import (
 	"io"
 	"log"
 	"net"
-	"sync"
 	"time"
 
 	"github.com/smartlink/slp-server/internal/auth"
@@ -165,7 +164,7 @@ func (s *KCPServer) handleData(conn net.Conn, tokenInfo *auth.TokenInfo) {
 		// TCP 代理
 		if frame.Type == protocol.FrameTCP {
 			go func() {
-				p, err := proxy.NewStreamProxy(conn, frame.Addr, frame.Port)
+				p, err := proxy.NewStreamProxy(conn, frame.Addr, frame.Port, tokenInfo.OutboundIP)
 				if err != nil {
 					log.Printf("Failed to create proxy: %v", err)
 					return
