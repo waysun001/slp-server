@@ -94,10 +94,9 @@ type DataFrame struct {
 	AddrType byte
 	Addr     string
 	Port     uint16
-	Payload  []byte
 }
 
-// ReadDataFrame 读取数据帧
+// ReadDataFrame 读取数据帧（只读取头部，后续数据流式传输）
 func ReadDataFrame(r io.Reader) (*DataFrame, error) {
 	header := make([]byte, 3)
 	if _, err := io.ReadFull(r, header); err != nil {
@@ -135,46 +134,7 @@ func ReadDataFrame(r io.Reader) (*DataFrame, error) {
 	}
 	frame.Port = binary.BigEndian.Uint16(portBytes)
 
-	// 读取 payload 长度
-	payloadLenBytes := make([]byte, 4)
-	if _, err := io.ReadFull(r, payloadLenBytes); err != nil {
-		return nil, err
-	}
-	payloadLen := binary.BigEndian.Uint32(payloadLenBytes)
-
-	if payloadLen > 0 {
-		frame.Payload = make([]byte, payloadLen)
-		if _, err := io.ReadFull(r, frame.Payload); err != nil {
-			return nil, err
-		}
-	}
-
 	return frame, nil
-}
-
-// WriteDataFrame 写入数据帧
-func WriteDataFrame(w io.Writer, frame *DataFrame) error {
-	var addrBytes []byte
-	switch frame.AddrType {
-	case AddrIPv4:
-		addrBytes = net.ParseIP(frame.Addr).To4()
-	case AddrIPv6:
-		addrBytes = net.ParseIP(frame.Addr).To16()
-	case AddrDomain:
-		addrBytes = []byte(frame.Addr)
-	}
-
-	buf := make([]byte, 3+len(addrBytes)+2+4+len(frame.Payload))
-	buf[0] = frame.Type
-	buf[1] = frame.AddrType
-	buf[2] = byte(len(addrBytes))
-	copy(buf[3:], addrBytes)
-	binary.BigEndian.PutUint16(buf[3+len(addrBytes):], frame.Port)
-	binary.BigEndian.PutUint32(buf[3+len(addrBytes)+2:], uint32(len(frame.Payload)))
-	copy(buf[3+len(addrBytes)+6:], frame.Payload)
-
-	_, err := w.Write(buf)
-	return err
 }
 
 // WriteHeartbeat 写入心跳帧
