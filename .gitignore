@@ -1,0 +1,24 @@
+# Binaries
+slp-server
+slp-server-*
+*.exe
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Go
+vendor/
+
+# Logs
+*.log
+
+# Secrets
+*.pem
+*.key

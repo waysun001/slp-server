@@ -1,0 +1,35 @@
+server:
+  name: "slp-server-01"
+
+listen:
+  quic:
+    enabled: true
+    addr: ":443"
+  websocket:
+    enabled: false
+    addr: ":8443"
+    path: "/ws"
+  kcp:
+    enabled: false
+    addr: ":4000"
+    fec_data: 10
+    fec_parity: 3
+
+tls:
+  cert: "/etc/slp/fullchain.pem"
+  key: "/etc/slp/privkey.pem"
+  sni: ""
+
+auth:
+  tokens:
+    - name: "router-01"
+      token: "change-me-to-secure-token"
+      bandwidth: 0
+
+log:
+  level: "info"
+  file: ""
+
+stats:
+  enabled: false
+  api_addr: "127.0.0.1:9090"

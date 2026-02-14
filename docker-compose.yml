@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  slp-server:
+    build: .
+    container_name: slp-server
+    restart: unless-stopped
+    ports:
+      - "443:443/udp"     # QUIC
+      - "8443:8443/tcp"   # WebSocket
+      - "4000:4000/udp"   # KCP
+    volumes:
+      - ./config.yaml:/etc/slp/config.yaml:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    environment:
+      - TZ=Asia/Shanghai
