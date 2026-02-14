@@ -44,8 +44,21 @@ func (s *Server) Start() error {
 		}
 	}
 
-	// TODO: 启动 WebSocket 监听
-	// TODO: 启动 KCP 监听
+	// 启动 WebSocket 监听
+	if s.cfg.Listen.WebSocket.Enabled {
+		ws := NewWebSocketServer(s.cfg, s.authManager)
+		if err := ws.Start(); err != nil {
+			return fmt.Errorf("failed to start WebSocket: %w", err)
+		}
+	}
+
+	// 启动 KCP 监听
+	if s.cfg.Listen.KCP.Enabled {
+		kcp := NewKCPServer(s.cfg, s.authManager)
+		if err := kcp.Start(); err != nil {
+			return fmt.Errorf("failed to start KCP: %w", err)
+		}
+	}
 
 	return nil
 }
