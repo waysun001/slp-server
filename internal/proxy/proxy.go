@@ -134,24 +134,39 @@ func NewStreamProxy(stream io.ReadWriteCloser, targetAddr string, targetPort uin
 }
 
 func (p *StreamProxy) Start() {
-	go p.copyToTarget()
-	go p.copyFromTarget()
+	var wg sync.WaitGroup
+	wg.Add(2)
+	
+	go func() {
+		defer wg.Done()
+		p.copyToTarget()
+	}()
+	
+	go func() {
+		defer wg.Done()
+		p.copyFromTarget()
+	}()
+	
+	wg.Wait()
 }
 
 func (p *StreamProxy) copyToTarget() {
-	defer p.Close()
 	_, err := io.Copy(p.targetConn, p.stream)
 	if err != nil {
 		log.Printf("copy to target error: %v", err)
 	}
+	// 关闭目标连接的写方向
+	if tc, ok := p.targetConn.(*net.TCPConn); ok {
+		tc.CloseWrite()
+	}
 }
 
 func (p *StreamProxy) copyFromTarget() {
-	defer p.Close()
 	_, err := io.Copy(p.stream, p.targetConn)
 	if err != nil {
 		log.Printf("copy from target error: %v", err)
 	}
+	p.stream.Close()
 }
 
 func (p *StreamProxy) Close() {
