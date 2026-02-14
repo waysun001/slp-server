@@ -12,8 +12,9 @@ type Manager struct {
 }
 
 type TokenInfo struct {
-	Name      string
-	Bandwidth int // Mbps, 0=unlimited
+	Name       string
+	Bandwidth  int    // Mbps, 0=unlimited
+	OutboundIP string // 出口 IP，空=默认
 }
 
 func NewManager(cfg *config.AuthConfig) *Manager {
@@ -23,8 +24,9 @@ func NewManager(cfg *config.AuthConfig) *Manager {
 
 	for _, t := range cfg.Tokens {
 		m.tokens[t.Token] = &TokenInfo{
-			Name:      t.Name,
-			Bandwidth: t.Bandwidth,
+			Name:       t.Name,
+			Bandwidth:  t.Bandwidth,
+			OutboundIP: t.OutboundIP,
 		}
 	}
 

@@ -22,14 +22,27 @@ tls:
 
 auth:
   tokens:
+    # 默认出口（使用服务器主 IP）
     - name: "router-01"
-      token: "change-me-to-secure-token"
+      token: "token-for-router-01"
       bandwidth: 0
+      outbound_ip: ""
+    
+    # 指定出口 IP（多 IP 服务器）
+    - name: "router-02"
+      token: "token-for-router-02"
+      bandwidth: 100
+      outbound_ip: "1.2.3.4"
+    
+    - name: "router-03"
+      token: "token-for-router-03"
+      bandwidth: 0
+      outbound_ip: "5.6.7.8"
 
 log:
   level: "info"
   file: ""
 
 stats:
-  enabled: false
+  enabled: true
   api_addr: "127.0.0.1:9090"

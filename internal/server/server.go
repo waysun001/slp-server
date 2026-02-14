@@ -195,10 +195,10 @@ func (s *Server) handleDataStream(stream quic.Stream, tokenInfo *auth.TokenInfo)
 		return
 	}
 
-	log.Printf("[%s] Proxy to %s:%d", tokenInfo.Name, frame.Addr, frame.Port)
+	log.Printf("[%s] Proxy to %s:%d (outbound: %s)", tokenInfo.Name, frame.Addr, frame.Port, tokenInfo.OutboundIP)
 
-	// 创建代理
-	p, err := proxy.NewStreamProxy(stream, frame.Addr, frame.Port)
+	// 创建代理，使用指定的出口 IP
+	p, err := proxy.NewStreamProxy(stream, frame.Addr, frame.Port, tokenInfo.OutboundIP)
 	if err != nil {
 		log.Printf("Failed to create proxy: %v", err)
 		return

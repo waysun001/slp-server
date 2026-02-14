@@ -9,16 +9,47 @@ import (
 	"time"
 )
 
+// Dialer 带出口 IP 的拨号器
+type Dialer struct {
+	OutboundIP string
+}
+
+// Dial 使用指定出口 IP 连接目标
+func (d *Dialer) Dial(network, address string) (net.Conn, error) {
+	var localAddr net.Addr
+	
+	if d.OutboundIP != "" {
+		switch network {
+		case "tcp", "tcp4", "tcp6":
+			localAddr = &net.TCPAddr{IP: net.ParseIP(d.OutboundIP)}
+		case "udp", "udp4", "udp6":
+			localAddr = &net.UDPAddr{IP: net.ParseIP(d.OutboundIP)}
+		}
+	}
+	
+	dialer := &net.Dialer{
+		LocalAddr: localAddr,
+		Timeout:   10 * time.Second,
+	}
+	
+	return dialer.Dial(network, address)
+}
+
 // TCPProxy 处理 TCP 代理转发
-func TCPProxy(clientConn io.ReadWriteCloser, targetAddr string, targetPort uint16) error {
+func TCPProxy(clientConn io.ReadWriteCloser, targetAddr string, targetPort uint16, outboundIP string) error {
 	target := fmt.Sprintf("%s:%d", targetAddr, targetPort)
 
-	// 连接目标服务器
-	targetConn, err := net.DialTimeout("tcp", target, 10*time.Second)
+	// 使用指定出口 IP 连接目标服务器
+	dialer := &Dialer{OutboundIP: outboundIP}
+	targetConn, err := dialer.Dial("tcp", target)
 	if err != nil {
 		return fmt.Errorf("failed to connect target %s: %w", target, err)
 	}
 	defer targetConn.Close()
+
+	if outboundIP != "" {
+		log.Printf("Connected to %s via %s", target, outboundIP)
+	}
 
 	// 双向转发
 	var wg sync.WaitGroup
@@ -28,7 +59,9 @@ func TCPProxy(clientConn io.ReadWriteCloser, targetAddr string, targetPort uint1
 	go func() {
 		defer wg.Done()
 		io.Copy(targetConn, clientConn)
-		targetConn.(*net.TCPConn).CloseWrite()
+		if tc, ok := targetConn.(*net.TCPConn); ok {
+			tc.CloseWrite()
+		}
 	}()
 
 	// target -> client
@@ -76,20 +109,27 @@ type StreamProxy struct {
 	stream     io.ReadWriteCloser
 	targetConn net.Conn
 	done       chan struct{}
+	outboundIP string
 }
 
-func NewStreamProxy(stream io.ReadWriteCloser, targetAddr string, targetPort uint16) (*StreamProxy, error) {
+func NewStreamProxy(stream io.ReadWriteCloser, targetAddr string, targetPort uint16, outboundIP string) (*StreamProxy, error) {
 	target := fmt.Sprintf("%s:%d", targetAddr, targetPort)
 
-	targetConn, err := net.DialTimeout("tcp", target, 10*time.Second)
+	dialer := &Dialer{OutboundIP: outboundIP}
+	targetConn, err := dialer.Dial("tcp", target)
 	if err != nil {
 		return nil, err
+	}
+
+	if outboundIP != "" {
+		log.Printf("Stream proxy to %s via %s", target, outboundIP)
 	}
 
 	return &StreamProxy{
 		stream:     stream,
 		targetConn: targetConn,
 		done:       make(chan struct{}),
+		outboundIP: outboundIP,
 	}, nil
 }
 

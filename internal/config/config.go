@@ -57,6 +57,7 @@ type TokenConfig struct {
 	Name      string `yaml:"name"`
 	Token     string `yaml:"token"`
 	Bandwidth int    `yaml:"bandwidth"` // Mbps, 0=unlimited
+	OutboundIP string `yaml:"outbound_ip"` // 出口 IP，空=默认
 }
 
 type LogConfig struct {
