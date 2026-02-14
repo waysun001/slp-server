@@ -184,6 +184,9 @@ create_config() {
       outbound_ip: \"\""
     fi
     
+    # 生成混淆密钥
+    local obfs_key=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
+    
     cat > "${CONFIG_DIR}/config.yaml" << EOF
 server:
   name: "slp-$(hostname -s)"
@@ -192,6 +195,8 @@ listen:
   quic:
     enabled: true
     addr: ":${port}"
+    obfs_addr: ":$((port + 100))"
+    obfs_key: "${obfs_key}"
   websocket:
     enabled: true
     addr: ":$((port + 1))"
@@ -219,6 +224,7 @@ stats:
 EOF
 
     log_info "配置已写入 ${CONFIG_DIR}/config.yaml"
+    log_info "混淆密钥: ${obfs_key}"
 }
 
 # 创建 systemd 服务
@@ -260,14 +266,16 @@ setup_firewall() {
     
     if check_command ufw; then
         ufw allow ${port}/udp comment "SLP QUIC"
+        ufw allow $((port + 100))/udp comment "SLP QUIC Obfs"
         ufw allow $((port + 1))/tcp comment "SLP WebSocket"
         ufw --force enable 2>/dev/null || true
     elif check_command firewall-cmd; then
         firewall-cmd --permanent --add-port=${port}/udp
+        firewall-cmd --permanent --add-port=$((port + 100))/udp
         firewall-cmd --permanent --add-port=$((port + 1))/tcp
         firewall-cmd --reload
     else
-        log_warn "未检测到防火墙，请手动开放端口 ${port}/udp 和 $((port + 1))/tcp"
+        log_warn "未检测到防火墙，请手动开放端口 ${port}/udp, $((port + 100))/udp 和 $((port + 1))/tcp"
     fi
 }
 
@@ -295,6 +303,9 @@ show_info() {
     # 获取所有 IP 和 token
     local ips=($(get_public_ips))
     
+    # 读取混淆密钥
+    local obfs_key=$(grep "obfs_key:" ${CONFIG_DIR}/config.yaml | head -1 | awk '{print $2}' | tr -d '"')
+    
     echo ""
     echo "=============================================="
     echo -e "${GREEN}SLP Server 安装完成！${NC}"
@@ -303,7 +314,13 @@ show_info() {
     echo "服务器信息:"
     echo "  主 IP:  ${ip}"
     echo "  域名:   ${domain:-未设置}"
-    echo "  端口:   ${port} (QUIC), $((port + 1)) (WebSocket)"
+    echo ""
+    echo "监听端口:"
+    echo "  QUIC:       ${port}/udp"
+    echo "  QUIC+混淆:  $((port + 100))/udp"
+    echo "  WebSocket:  $((port + 1))/tcp"
+    echo ""
+    echo "混淆密钥: ${obfs_key}"
     echo ""
     echo "检测到 ${#ips[@]} 个出口 IP，已自动配置:"
     echo ""
@@ -319,7 +336,8 @@ show_info() {
     done
     
     echo "客户端连接命令:"
-    echo "  slp-client -s ${domain:-$ip} -p ${port} -t <TOKEN> -insecure"
+    echo "  普通模式:  slp-client -s ${domain:-$ip} -p ${port} -t <TOKEN> -insecure"
+    echo "  混淆模式:  slp-client -s ${domain:-$ip} -p $((port + 100)) -t <TOKEN> -obfs -obfs-key ${obfs_key} -insecure"
     echo ""
     echo "管理命令:"
     echo "  状态:  systemctl status ${SERVICE_NAME}"

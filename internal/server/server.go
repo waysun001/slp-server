@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"sync"
 	"time"
 
 	"github.com/quic-go/quic-go"
 	"github.com/smartlink/slp-server/internal/auth"
 	"github.com/smartlink/slp-server/internal/config"
+	"github.com/smartlink/slp-server/internal/obfs"
 	"github.com/smartlink/slp-server/internal/protocol"
 	"github.com/smartlink/slp-server/internal/proxy"
 )
@@ -20,6 +22,7 @@ type Server struct {
 	cfg         *config.Config
 	authManager *auth.Manager
 	quicLn      *quic.Listener
+	quicObfsLn  *quic.Listener
 	ctx         context.Context
 	cancel      context.CancelFunc
 	wg          sync.WaitGroup
@@ -41,6 +44,13 @@ func (s *Server) Start() error {
 	if s.cfg.Listen.QUIC.Enabled {
 		if err := s.startQUIC(); err != nil {
 			return fmt.Errorf("failed to start QUIC: %w", err)
+		}
+		
+		// 启动混淆 QUIC 监听
+		if s.cfg.Listen.QUIC.ObfsAddr != "" {
+			if err := s.startQUICObfs(); err != nil {
+				return fmt.Errorf("failed to start QUIC Obfs: %w", err)
+			}
 		}
 	}
 
@@ -67,6 +77,9 @@ func (s *Server) Stop() {
 	s.cancel()
 	if s.quicLn != nil {
 		s.quicLn.Close()
+	}
+	if s.quicObfsLn != nil {
+		s.quicObfsLn.Close()
 	}
 	s.wg.Wait()
 }
@@ -97,16 +110,68 @@ func (s *Server) startQUIC() error {
 	log.Printf("QUIC listening on %s", s.cfg.Listen.QUIC.Addr)
 
 	s.wg.Add(1)
-	go s.acceptQUIC()
+	go s.acceptQUIC(ln)
 
 	return nil
 }
 
-func (s *Server) acceptQUIC() {
+func (s *Server) startQUICObfs() error {
+	// 加载 TLS 证书
+	cert, err := tls.LoadX509KeyPair(s.cfg.TLS.Cert, s.cfg.TLS.Key)
+	if err != nil {
+		return fmt.Errorf("failed to load TLS cert: %w", err)
+	}
+
+	tlsConfig := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		NextProtos:   []string{"slp", "h3"},
+	}
+
+	quicConfig := &quic.Config{
+		MaxIdleTimeout:  30 * time.Second,
+		KeepAlivePeriod: 15 * time.Second,
+	}
+
+	// 创建 UDP 监听
+	udpAddr, err := net.ResolveUDPAddr("udp", s.cfg.Listen.QUIC.ObfsAddr)
+	if err != nil {
+		return err
+	}
+	
+	udpConn, err := net.ListenUDP("udp", udpAddr)
+	if err != nil {
+		return err
+	}
+	
+	// 包装为混淆连接
+	obfsKey := s.cfg.Listen.QUIC.ObfsKey
+	if obfsKey == "" {
+		obfsKey = "slp-default-obfs-key" // 默认密钥
+	}
+	obfsConn := obfs.NewObfsPacketConn(udpConn, obfsKey)
+	
+	// 使用混淆连接创建 QUIC 监听
+	tr := &quic.Transport{Conn: obfsConn}
+	ln, err := tr.Listen(tlsConfig, quicConfig)
+	if err != nil {
+		udpConn.Close()
+		return err
+	}
+	s.quicObfsLn = ln
+
+	log.Printf("QUIC (Obfs) listening on %s", s.cfg.Listen.QUIC.ObfsAddr)
+
+	s.wg.Add(1)
+	go s.acceptQUIC(ln)
+
+	return nil
+}
+
+func (s *Server) acceptQUIC(ln *quic.Listener) {
 	defer s.wg.Done()
 
 	for {
-		conn, err := s.quicLn.Accept(s.ctx)
+		conn, err := ln.Accept(s.ctx)
 		if err != nil {
 			select {
 			case <-s.ctx.Done():

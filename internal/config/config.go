@@ -26,8 +26,10 @@ type ListenConfig struct {
 }
 
 type QUICConfig struct {
-	Enabled bool   `yaml:"enabled"`
-	Addr    string `yaml:"addr"`
+	Enabled  bool   `yaml:"enabled"`
+	Addr     string `yaml:"addr"`
+	ObfsAddr string `yaml:"obfs_addr"` // 混淆端口，如 :4443
+	ObfsKey  string `yaml:"obfs_key"`  // 混淆密钥
 }
 
 type WebSocketConfig struct {
