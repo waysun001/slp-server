@@ -2,6 +2,7 @@
 /slp-server
 /slp-server-*
 *.exe
+release/
 
 # IDE
 .idea/

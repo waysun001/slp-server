@@ -1,10 +1,14 @@
 #!/bin/bash
 #
 # SLP Server 一键部署脚本
-# 用法: curl -fsSL https://raw.githubusercontent.com/yourrepo/slp-server/main/install.sh | bash
+# 从预编译二进制安装，不依赖 Go/Git
 #
 
 set -e
+
+# ========== 下载地址（部署前替换为实际服务器地址） ==========
+DOWNLOAD_BASE_URL="https://your-server.com/slp"
+# ===========================================================
 
 # 颜色
 RED='\033[0;31m'
@@ -35,8 +39,6 @@ INSTALL_DIR="/usr/local/bin"
 CONFIG_DIR="/etc/slp"
 SERVICE_NAME="slp-server"
 BINARY_NAME="slp-server"
-GITHUB_REPO="waysun001/slp-server"
-VERSION="${VERSION:-latest}"
 
 # 生成随机 token
 generate_token() {
@@ -51,7 +53,7 @@ check_command() {
 # 安装依赖
 install_deps() {
     log_info "检查依赖..."
-    
+
     if check_command apt-get; then
         apt-get update -qq
         apt-get install -y -qq curl wget certbot
@@ -64,68 +66,46 @@ install_deps() {
     fi
 }
 
-# 下载二进制
+# 下载预编译二进制
 download_binary() {
-    # 直接从源码编译（更可靠）
-    compile_from_source
-}
+    local url="${DOWNLOAD_BASE_URL}/slp-server-linux-${ARCH}"
+    local target="${INSTALL_DIR}/${BINARY_NAME}"
 
-# 从源码编译
-compile_from_source() {
-    log_info "从源码编译..."
-    
-    # 检查 Git
-    if ! check_command git; then
-        apt-get install -y -qq git || yum install -y -q git || dnf install -y -q git
+    log_info "下载二进制: ${url}"
+
+    if check_command curl; then
+        curl -fSL --progress-bar -o "${target}" "${url}" || log_error "下载失败: ${url}"
+    elif check_command wget; then
+        wget -q --show-progress -O "${target}" "${url}" || log_error "下载失败: ${url}"
+    else
+        log_error "需要 curl 或 wget，请先安装"
     fi
-    
-    # 检查 Go
-    if ! check_command go; then
-        log_info "安装 Go 1.21..."
-        wget -q --show-progress https://go.dev/dl/go1.21.6.linux-${ARCH}.tar.gz -O /tmp/go.tar.gz
-        rm -rf /usr/local/go
-        tar -C /usr/local -xzf /tmp/go.tar.gz
-        rm /tmp/go.tar.gz
-        export PATH=$PATH:/usr/local/go/bin
-        echo 'export PATH=$PATH:/usr/local/go/bin' >> /etc/profile
-    fi
-    
-    # 克隆并编译
-    local tmp_dir=$(mktemp -d)
-    cd "$tmp_dir"
-    log_info "克隆仓库..."
-    git clone --depth 1 "https://github.com/${GITHUB_REPO}.git" .
-    log_info "编译中..."
-    go mod tidy
-    CGO_ENABLED=0 go build -ldflags "-s -w" -o "${INSTALL_DIR}/${BINARY_NAME}" ./cmd/slp-server/
-    cd /
-    rm -rf "$tmp_dir"
-    
-    chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
-    log_info "编译完成: ${INSTALL_DIR}/${BINARY_NAME}"
+
+    chmod +x "${target}"
+    log_info "已安装: ${target}"
 }
 
 # 申请证书
 setup_cert() {
     local domain="$1"
-    
+
     if [[ -z "$domain" ]]; then
         log_warn "未指定域名，跳过证书申请"
         log_warn "请手动运行: certbot certonly --standalone -d your-domain.com"
         return 1
     fi
-    
+
     log_info "申请 TLS 证书: $domain"
-    
+
     # 停止占用 80 端口的服务
     systemctl stop nginx 2>/dev/null || true
     systemctl stop apache2 2>/dev/null || true
-    
+
     certbot certonly --standalone --non-interactive --agree-tos \
         --register-unsafely-without-email -d "$domain" || {
         log_error "证书申请失败，请检查域名解析和防火墙"
     }
-    
+
     log_info "证书申请成功"
     return 0
 }
@@ -140,30 +120,30 @@ create_config() {
     local domain="$1"
     local token="$2"
     local port="${3:-443}"
-    
+
     mkdir -p "$CONFIG_DIR"
-    
+
     local cert_path="/etc/letsencrypt/live/${domain}/fullchain.pem"
     local key_path="/etc/letsencrypt/live/${domain}/privkey.pem"
-    
+
     # 如果没有证书，使用自签名
     if [[ ! -f "$cert_path" ]]; then
         log_warn "未找到 Let's Encrypt 证书，生成自签名证书..."
         cert_path="${CONFIG_DIR}/cert.pem"
         key_path="${CONFIG_DIR}/key.pem"
-        
+
         openssl req -x509 -newkey rsa:4096 -sha256 -days 365 -nodes \
             -keyout "$key_path" -out "$cert_path" \
             -subj "/CN=${domain:-slp-server}" \
             -addext "subjectAltName=DNS:${domain:-localhost},IP:0.0.0.0" 2>/dev/null
     fi
-    
+
     # 获取所有公网 IP
     local ips=($(get_public_ips))
     local ip_count=${#ips[@]}
-    
+
     log_info "检测到 ${ip_count} 个公网 IP"
-    
+
     # 生成 tokens 配置
     local tokens_config=""
     local i=1
@@ -175,7 +155,7 @@ create_config() {
       outbound_ip: \"${ip}\""
         i=$((i + 1))
     done
-    
+
     # 如果没有检测到 IP，使用默认配置
     if [[ -z "$tokens_config" ]]; then
         tokens_config="
@@ -183,10 +163,10 @@ create_config() {
       token: \"${token}\"
       outbound_ip: \"\""
     fi
-    
+
     # 生成混淆密钥
     local obfs_key=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
-    
+
     cat > "${CONFIG_DIR}/config.yaml" << EOF
 server:
   name: "slp-$(hostname -s)"
@@ -232,7 +212,6 @@ create_service() {
     cat > "/etc/systemd/system/${SERVICE_NAME}.service" << EOF
 [Unit]
 Description=SmartLink Protocol Server
-Documentation=https://github.com/${GITHUB_REPO}
 After=network.target
 
 [Service]
@@ -261,9 +240,9 @@ EOF
 # 配置防火墙
 setup_firewall() {
     local port="${1:-443}"
-    
+
     log_info "配置防火墙..."
-    
+
     if check_command ufw; then
         ufw allow ${port}/udp comment "SLP QUIC"
         ufw allow $((port + 100))/udp comment "SLP QUIC Obfs"
@@ -284,7 +263,7 @@ start_service() {
     log_info "启动服务..."
     systemctl enable "${SERVICE_NAME}"
     systemctl start "${SERVICE_NAME}"
-    
+
     sleep 2
     if systemctl is-active --quiet "${SERVICE_NAME}"; then
         log_info "服务启动成功"
@@ -299,13 +278,13 @@ show_info() {
     local domain="$2"
     local port="${3:-443}"
     local ip=$(curl -s4 ip.sb || curl -s4 ifconfig.me || echo "YOUR_SERVER_IP")
-    
+
     # 获取所有 IP 和 token
     local ips=($(get_public_ips))
-    
+
     # 读取混淆密钥
     local obfs_key=$(grep "obfs_key:" ${CONFIG_DIR}/config.yaml | head -1 | awk '{print $2}' | tr -d '"')
-    
+
     echo ""
     echo "=============================================="
     echo -e "${GREEN}SLP Server 安装完成！${NC}"
@@ -324,7 +303,7 @@ show_info() {
     echo ""
     echo "检测到 ${#ips[@]} 个出口 IP，已自动配置:"
     echo ""
-    
+
     # 从配置文件读取 token
     local i=1
     for out_ip in "${ips[@]}"; do
@@ -334,7 +313,7 @@ show_info() {
         echo ""
         i=$((i + 1))
     done
-    
+
     echo "客户端连接命令:"
     echo "  普通模式:  slp-client -s ${domain:-$ip} -p ${port} -t <TOKEN> -insecure"
     echo "  混淆模式:  slp-client -s ${domain:-$ip} -p $((port + 100)) -t <TOKEN> -obfs -obfs-key ${obfs_key} -insecure"
@@ -351,14 +330,14 @@ show_info() {
 # 卸载
 uninstall() {
     log_info "卸载 SLP Server..."
-    
+
     systemctl stop "${SERVICE_NAME}" 2>/dev/null || true
     systemctl disable "${SERVICE_NAME}" 2>/dev/null || true
     rm -f "/etc/systemd/system/${SERVICE_NAME}.service"
     rm -f "${INSTALL_DIR}/${BINARY_NAME}"
     rm -rf "${CONFIG_DIR}"
     systemctl daemon-reload
-    
+
     log_info "卸载完成"
 }
 
@@ -368,7 +347,7 @@ main() {
     local token=""
     local port="443"
     local action="install"
-    
+
     # 解析参数
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -409,31 +388,31 @@ main() {
                 ;;
         esac
     done
-    
+
     # 卸载
     if [[ "$action" == "uninstall" ]]; then
         uninstall
         exit 0
     fi
-    
+
     # 生成 token
     [[ -z "$token" ]] && token=$(generate_token)
-    
+
     echo ""
     echo "=============================================="
     echo "       SLP Server 一键部署脚本"
     echo "=============================================="
     echo ""
-    
+
     # 安装流程
     install_deps
     download_binary
-    
+
     # 申请证书（如果指定了域名）
     if [[ -n "$domain" ]]; then
         setup_cert "$domain"
     fi
-    
+
     create_config "$domain" "$token" "$port"
     create_service
     setup_firewall "$port"
