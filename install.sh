@@ -6,9 +6,8 @@
 
 set -e
 
-# ========== 下载地址（部署前替换为实际服务器地址） ==========
-DOWNLOAD_BASE_URL="https://your-server.com/slp"
-# ===========================================================
+# 脚本所在目录（用于查找同目录下的二进制文件）
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # 颜色
 RED='\033[0;31m'
@@ -66,19 +65,16 @@ install_deps() {
     fi
 }
 
-# 下载预编译二进制
-download_binary() {
-    local url="${DOWNLOAD_BASE_URL}/slp-server-linux-${ARCH}"
+# 安装二进制（优先使用同目录下的文件）
+install_binary() {
     local target="${INSTALL_DIR}/${BINARY_NAME}"
+    local local_bin="${SCRIPT_DIR}/slp-server-linux-${ARCH}"
 
-    log_info "下载二进制: ${url}"
-
-    if check_command curl; then
-        curl -fSL --progress-bar -o "${target}" "${url}" || log_error "下载失败: ${url}"
-    elif check_command wget; then
-        wget -q --show-progress -O "${target}" "${url}" || log_error "下载失败: ${url}"
+    if [[ -f "$local_bin" ]]; then
+        log_info "使用本地二进制: ${local_bin}"
+        cp "$local_bin" "$target"
     else
-        log_error "需要 curl 或 wget，请先安装"
+        log_error "未找到二进制文件: ${local_bin}\n请将 slp-server-linux-${ARCH} 放在 install.sh 同目录下"
     fi
 
     chmod +x "${target}"
@@ -406,7 +402,7 @@ main() {
 
     # 安装流程
     install_deps
-    download_binary
+    install_binary
 
     # 申请证书（如果指定了域名）
     if [[ -n "$domain" ]]; then
