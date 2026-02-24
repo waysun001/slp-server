@@ -108,7 +108,16 @@ setup_cert() {
 
 # 获取所有公网 IP
 get_public_ips() {
-    ip addr | grep "inet " | grep -v "127.0.0.1" | grep -v "10\." | grep -v "172\.16\." | grep -v "192\.168\." | awk '{print $2}' | cut -d'/' -f1 | sort -u
+    # 先从本地网卡查找（排除私有网段和回环）
+    local ips
+    ips=$(ip addr | grep "inet " | grep -v "127.0.0.1" | grep -v " 10\." | grep -v " 172\.1[6-9]\." | grep -v " 172\.2[0-9]\." | grep -v " 172\.3[01]\." | grep -v " 192\.168\." | grep -v " 100\.64\." | awk '{print $2}' | cut -d'/' -f1 | sort -u)
+
+    # 云主机通常是 NAT，本地网卡上只有内网 IP，回退到外部探测
+    if [[ -z "$ips" ]]; then
+        ips=$(curl -s4 --connect-timeout 5 ip.sb || curl -s4 --connect-timeout 5 ifconfig.me || echo "")
+    fi
+
+    echo "$ips"
 }
 
 # 创建配置
@@ -128,10 +137,30 @@ create_config() {
         cert_path="${CONFIG_DIR}/cert.pem"
         key_path="${CONFIG_DIR}/key.pem"
 
+        # 兼容 OpenSSL 1.0.x（CentOS 7 等），使用 -config 替代 -addext
+        local cn="${domain:-slp-server}"
+        local san_dns="${domain:-localhost}"
         openssl req -x509 -newkey rsa:4096 -sha256 -days 365 -nodes \
             -keyout "$key_path" -out "$cert_path" \
-            -subj "/CN=${domain:-slp-server}" \
-            -addext "subjectAltName=DNS:${domain:-localhost},IP:0.0.0.0" 2>/dev/null
+            -subj "/CN=${cn}" \
+            -config <(cat <<-SSLEOF
+[req]
+distinguished_name = req_distinguished_name
+x509_extensions = v3_ext
+prompt = no
+
+[req_distinguished_name]
+CN = ${cn}
+
+[v3_ext]
+subjectAltName = DNS:${san_dns},IP:0.0.0.0
+SSLEOF
+            ) 2>/dev/null || {
+            # 如果仍然失败，尝试最简单的方式（无 SAN）
+            openssl req -x509 -newkey rsa:4096 -sha256 -days 365 -nodes \
+                -keyout "$key_path" -out "$cert_path" \
+                -subj "/CN=${cn}" 2>/dev/null
+        }
     fi
 
     # 获取所有公网 IP
