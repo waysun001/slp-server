@@ -97,7 +97,7 @@ func (s *Server) startQUIC() error {
 	}
 
 	quicConfig := &quic.Config{
-		MaxIdleTimeout:  30 * time.Second,
+		MaxIdleTimeout:  0, // 永不超时
 		KeepAlivePeriod: 15 * time.Second,
 	}
 
@@ -128,7 +128,7 @@ func (s *Server) startQUICObfs() error {
 	}
 
 	quicConfig := &quic.Config{
-		MaxIdleTimeout:  30 * time.Second,
+		MaxIdleTimeout:  0, // 永不超时
 		KeepAlivePeriod: 15 * time.Second,
 	}
 
