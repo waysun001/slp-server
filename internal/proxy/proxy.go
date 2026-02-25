@@ -106,11 +106,25 @@ func UDPProxy(data []byte, targetAddr string, targetPort uint16, responseCh chan
 	return nil
 }
 
+// idleTimeoutReader wraps a reader with deadline-based idle timeout.
+type idleTimeoutReader struct {
+	reader      io.Reader
+	setDeadline func(time.Time) error
+	timeout     time.Duration
+}
+
+func (r *idleTimeoutReader) Read(p []byte) (int, error) {
+	if err := r.setDeadline(time.Now().Add(r.timeout)); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(p)
+}
+
 // StreamProxy 流式代理（用于 QUIC stream）
 type StreamProxy struct {
 	stream     io.ReadWriteCloser
 	targetConn net.Conn
-	done       chan struct{}
+	closeOnce  sync.Once
 	outboundIP string
 }
 
@@ -130,7 +144,6 @@ func NewStreamProxy(stream io.ReadWriteCloser, targetAddr string, targetPort uin
 	return &StreamProxy{
 		stream:     stream,
 		targetConn: targetConn,
-		done:       make(chan struct{}),
 		outboundIP: outboundIP,
 	}, nil
 }
@@ -138,22 +151,34 @@ func NewStreamProxy(stream io.ReadWriteCloser, targetAddr string, targetPort uin
 func (p *StreamProxy) Start() {
 	var wg sync.WaitGroup
 	wg.Add(2)
-	
+
 	go func() {
 		defer wg.Done()
 		p.copyToTarget()
+		// 当一个方向结束时，关闭所有连接以唤醒另一个方向
+		// 防止对端已断开但本端仍阻塞等待 60s idle timeout
+		p.Close()
 	}()
-	
+
 	go func() {
 		defer wg.Done()
 		p.copyFromTarget()
+		p.Close()
 	}()
-	
+
 	wg.Wait()
 }
 
 func (p *StreamProxy) copyToTarget() {
-	_, err := io.Copy(p.targetConn, p.stream)
+	const idleTimeout = 60 * time.Second
+
+	// Apply idle timeout to stream read if it supports SetReadDeadline
+	var reader io.Reader = p.stream
+	if dl, ok := p.stream.(interface{ SetReadDeadline(time.Time) error }); ok {
+		reader = &idleTimeoutReader{reader: p.stream, setDeadline: dl.SetReadDeadline, timeout: idleTimeout}
+	}
+
+	_, err := io.Copy(p.targetConn, reader)
 	if err != nil {
 		log.Printf("copy to target error: %v", err)
 	}
@@ -164,7 +189,16 @@ func (p *StreamProxy) copyToTarget() {
 }
 
 func (p *StreamProxy) copyFromTarget() {
-	_, err := io.Copy(p.stream, p.targetConn)
+	const idleTimeout = 60 * time.Second
+
+	// Apply idle timeout to target conn read
+	reader := &idleTimeoutReader{
+		reader:      p.targetConn,
+		setDeadline: p.targetConn.SetReadDeadline,
+		timeout:     idleTimeout,
+	}
+
+	_, err := io.Copy(p.stream, reader)
 	if err != nil {
 		log.Printf("copy from target error: %v", err)
 	}
@@ -172,14 +206,10 @@ func (p *StreamProxy) copyFromTarget() {
 }
 
 func (p *StreamProxy) Close() {
-	select {
-	case <-p.done:
-		return
-	default:
-		close(p.done)
+	p.closeOnce.Do(func() {
 		p.stream.Close()
 		p.targetConn.Close()
-	}
+	})
 }
 
 // UDPStreamProxy 通过流式连接代理 UDP 流量

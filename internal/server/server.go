@@ -97,8 +97,9 @@ func (s *Server) startQUIC() error {
 	}
 
 	quicConfig := &quic.Config{
-		MaxIdleTimeout:  0, // 永不超时
-		KeepAlivePeriod: 15 * time.Second,
+		MaxIdleTimeout:       5 * time.Minute,
+		KeepAlivePeriod:      15 * time.Second,
+		HandshakeIdleTimeout: 15 * time.Second,
 	}
 
 	ln, err := quic.ListenAddr(s.cfg.Listen.QUIC.Addr, tlsConfig, quicConfig)
@@ -128,8 +129,9 @@ func (s *Server) startQUICObfs() error {
 	}
 
 	quicConfig := &quic.Config{
-		MaxIdleTimeout:  0, // 永不超时
-		KeepAlivePeriod: 15 * time.Second,
+		MaxIdleTimeout:       5 * time.Minute,
+		KeepAlivePeriod:      15 * time.Second,
+		HandshakeIdleTimeout: 15 * time.Second,
 	}
 
 	// 创建 UDP 监听
