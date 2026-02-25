@@ -13,6 +13,7 @@ import (
 	"github.com/smartlink/slp-server/internal/auth"
 	"github.com/smartlink/slp-server/internal/config"
 	"github.com/smartlink/slp-server/internal/protocol"
+	"github.com/smartlink/slp-server/internal/proxy"
 )
 
 var upgrader = websocket.Upgrader{
@@ -168,10 +169,17 @@ func (s *WebSocketServer) handleProxy(wsConn *websocket.Conn, tokenInfo *auth.To
 
 		port := uint16(data[3+addrLen])<<8 | uint16(data[3+addrLen+1])
 
-		log.Printf("[%s] WS Proxy to %s:%d", tokenInfo.Name, addr, port)
-
-		// 连接目标并开始双向转发
-		go s.proxyToTarget(wsConn, addr, port, tokenInfo.OutboundIP)
+		switch frameType {
+		case protocol.FrameTCP:
+			log.Printf("[%s] WS Proxy TCP to %s:%d", tokenInfo.Name, addr, port)
+			go s.proxyToTarget(wsConn, addr, port, tokenInfo.OutboundIP)
+		case protocol.FrameUDP:
+			log.Printf("[%s] WS Proxy UDP to %s:%d", tokenInfo.Name, addr, port)
+			go s.udpProxyToTarget(wsConn, addr, port, tokenInfo.OutboundIP)
+		default:
+			log.Printf("Unknown frame type: 0x%02x", frameType)
+			continue
+		}
 		return // 一个 WebSocket 连接只处理一个代理请求
 	}
 }
@@ -225,5 +233,70 @@ func (s *WebSocketServer) proxyToTarget(wsConn *websocket.Conn, addr string, por
 		}
 	}()
 
+	wg.Wait()
+}
+
+// udpProxyToTarget WebSocket 天然有消息边界，每个 WS 消息 = 一个 UDP 包
+func (s *WebSocketServer) udpProxyToTarget(wsConn *websocket.Conn, addr string, port uint16, outboundIP string) {
+	target := fmt.Sprintf("%s:%d", addr, port)
+
+	dialer := &proxy.Dialer{OutboundIP: outboundIP}
+	udpConn, err := dialer.Dial("udp", target)
+	if err != nil {
+		log.Printf("Failed to dial UDP %s: %v", target, err)
+		return
+	}
+	defer udpConn.Close()
+
+	const idleTimeout = 60 * time.Second
+	done := make(chan struct{})
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	// WebSocket -> UDP socket
+	go func() {
+		defer wg.Done()
+		for {
+			_, data, err := wsConn.ReadMessage()
+			if err != nil {
+				break
+			}
+			udpConn.SetWriteDeadline(time.Now().Add(idleTimeout))
+			if _, err := udpConn.Write(data); err != nil {
+				break
+			}
+		}
+		select {
+		case <-done:
+		default:
+			close(done)
+		}
+	}()
+
+	// UDP socket -> WebSocket
+	go func() {
+		defer wg.Done()
+		buf := make([]byte, 65535)
+		for {
+			udpConn.SetReadDeadline(time.Now().Add(idleTimeout))
+			n, err := udpConn.Read(buf)
+			if err != nil {
+				break
+			}
+			if err := wsConn.WriteMessage(websocket.BinaryMessage, buf[:n]); err != nil {
+				break
+			}
+		}
+		select {
+		case <-done:
+		default:
+			close(done)
+		}
+	}()
+
+	<-done
+	udpConn.Close()
+	wsConn.Close()
 	wg.Wait()
 }

@@ -159,19 +159,30 @@ func (s *KCPServer) handleData(conn net.Conn, tokenInfo *auth.TokenInfo) {
 			return
 		}
 
-		log.Printf("[%s] KCP Proxy to %s:%d", tokenInfo.Name, frame.Addr, frame.Port)
-
-		// TCP 代理
-		if frame.Type == protocol.FrameTCP {
+		switch frame.Type {
+		case protocol.FrameTCP:
+			log.Printf("[%s] KCP Proxy TCP to %s:%d", tokenInfo.Name, frame.Addr, frame.Port)
 			go func() {
 				p, err := proxy.NewStreamProxy(conn, frame.Addr, frame.Port, tokenInfo.OutboundIP)
 				if err != nil {
-					log.Printf("Failed to create proxy: %v", err)
+					log.Printf("Failed to create TCP proxy: %v", err)
 					return
 				}
 				p.Start()
 			}()
 			return // 连接已被代理接管
+
+		case protocol.FrameUDP:
+			log.Printf("[%s] KCP Proxy UDP to %s:%d", tokenInfo.Name, frame.Addr, frame.Port)
+			go func() {
+				if err := proxy.UDPStreamProxy(conn, frame.Addr, frame.Port, tokenInfo.OutboundIP); err != nil {
+					log.Printf("UDP proxy error: %v", err)
+				}
+			}()
+			return // 连接已被代理接管
+
+		default:
+			log.Printf("Unknown frame type: 0x%02x", frame.Type)
 		}
 	}
 }

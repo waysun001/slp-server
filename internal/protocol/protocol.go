@@ -142,3 +142,31 @@ func WriteHeartbeat(w io.Writer) error {
 	_, err := w.Write([]byte{FrameHeartbeat, 0x00, 0x00})
 	return err
 }
+
+// ReadUDPPacket 从流中读取一个 UDP 包：[2字节大端长度][载荷]
+func ReadUDPPacket(r io.Reader) ([]byte, error) {
+	lenBuf := make([]byte, 2)
+	if _, err := io.ReadFull(r, lenBuf); err != nil {
+		return nil, err
+	}
+	pktLen := binary.BigEndian.Uint16(lenBuf)
+	if pktLen == 0 {
+		return nil, errors.New("zero length UDP packet")
+	}
+	payload := make([]byte, pktLen)
+	if _, err := io.ReadFull(r, payload); err != nil {
+		return nil, err
+	}
+	return payload, nil
+}
+
+// WriteUDPPacket 向流中写入一个 UDP 包：[2字节大端长度][载荷]
+func WriteUDPPacket(w io.Writer, data []byte) error {
+	header := make([]byte, 2)
+	binary.BigEndian.PutUint16(header, uint16(len(data)))
+	if _, err := w.Write(header); err != nil {
+		return err
+	}
+	_, err := w.Write(data)
+	return err
+}

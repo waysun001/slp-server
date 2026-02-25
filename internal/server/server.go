@@ -260,14 +260,23 @@ func (s *Server) handleDataStream(stream quic.Stream, tokenInfo *auth.TokenInfo)
 		return
 	}
 
-	log.Printf("[%s] Proxy to %s:%d (outbound: %s)", tokenInfo.Name, frame.Addr, frame.Port, tokenInfo.OutboundIP)
+	switch frame.Type {
+	case protocol.FrameTCP:
+		log.Printf("[%s] Proxy TCP to %s:%d (outbound: %s)", tokenInfo.Name, frame.Addr, frame.Port, tokenInfo.OutboundIP)
+		p, err := proxy.NewStreamProxy(stream, frame.Addr, frame.Port, tokenInfo.OutboundIP)
+		if err != nil {
+			log.Printf("Failed to create TCP proxy: %v", err)
+			return
+		}
+		p.Start()
 
-	// 创建代理，使用指定的出口 IP
-	p, err := proxy.NewStreamProxy(stream, frame.Addr, frame.Port, tokenInfo.OutboundIP)
-	if err != nil {
-		log.Printf("Failed to create proxy: %v", err)
-		return
+	case protocol.FrameUDP:
+		log.Printf("[%s] Proxy UDP to %s:%d (outbound: %s)", tokenInfo.Name, frame.Addr, frame.Port, tokenInfo.OutboundIP)
+		if err := proxy.UDPStreamProxy(stream, frame.Addr, frame.Port, tokenInfo.OutboundIP); err != nil {
+			log.Printf("UDP proxy error: %v", err)
+		}
+
+	default:
+		log.Printf("Unknown frame type: 0x%02x", frame.Type)
 	}
-
-	p.Start()
 }

@@ -7,6 +7,8 @@ import (
 	"net"
 	"sync"
 	"time"
+
+	"github.com/smartlink/slp-server/internal/protocol"
 )
 
 // Dialer 带出口 IP 的拨号器
@@ -178,4 +180,75 @@ func (p *StreamProxy) Close() {
 		p.stream.Close()
 		p.targetConn.Close()
 	}
+}
+
+// UDPStreamProxy 通过流式连接代理 UDP 流量
+// stream 使用 [2字节长度][载荷] 分帧，UDP socket 使用原生数据报
+func UDPStreamProxy(stream io.ReadWriteCloser, targetAddr string, targetPort uint16, outboundIP string) error {
+	target := fmt.Sprintf("%s:%d", targetAddr, targetPort)
+
+	dialer := &Dialer{OutboundIP: outboundIP}
+	udpConn, err := dialer.Dial("udp", target)
+	if err != nil {
+		return fmt.Errorf("failed to dial UDP %s: %w", target, err)
+	}
+	defer udpConn.Close()
+	defer stream.Close()
+
+	log.Printf("Proxy UDP to %s", target)
+
+	const idleTimeout = 60 * time.Second
+	done := make(chan struct{})
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	// stream -> UDP socket：读取长度前缀帧，发送原生数据报
+	go func() {
+		defer wg.Done()
+		for {
+			pkt, err := protocol.ReadUDPPacket(stream)
+			if err != nil {
+				break
+			}
+			udpConn.SetWriteDeadline(time.Now().Add(idleTimeout))
+			if _, err := udpConn.Write(pkt); err != nil {
+				break
+			}
+		}
+		select {
+		case <-done:
+		default:
+			close(done)
+		}
+	}()
+
+	// UDP socket -> stream：读取原生数据报，写入长度前缀帧
+	go func() {
+		defer wg.Done()
+		buf := make([]byte, 65535)
+		for {
+			udpConn.SetReadDeadline(time.Now().Add(idleTimeout))
+			n, err := udpConn.Read(buf)
+			if err != nil {
+				break
+			}
+			if err := protocol.WriteUDPPacket(stream, buf[:n]); err != nil {
+				break
+			}
+		}
+		select {
+		case <-done:
+		default:
+			close(done)
+		}
+	}()
+
+	// 等待任一方向结束
+	<-done
+	// 关闭连接以唤醒阻塞的另一方
+	udpConn.Close()
+	stream.Close()
+	wg.Wait()
+	return nil
 }
