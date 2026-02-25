@@ -97,9 +97,15 @@ func (s *Server) startQUIC() error {
 	}
 
 	quicConfig := &quic.Config{
-		MaxIdleTimeout:       5 * time.Minute,
-		KeepAlivePeriod:      15 * time.Second,
-		HandshakeIdleTimeout: 15 * time.Second,
+		MaxIdleTimeout:                 5 * time.Minute,
+		KeepAlivePeriod:                15 * time.Second,
+		HandshakeIdleTimeout:           15 * time.Second,
+		MaxIncomingStreams:              1024,
+		MaxIncomingUniStreams:           1024,
+		InitialStreamReceiveWindow:     4 * 1024 * 1024,  // 4MB（默认 512KB）
+		MaxStreamReceiveWindow:         16 * 1024 * 1024,  // 16MB（默认 6MB）
+		InitialConnectionReceiveWindow: 16 * 1024 * 1024,  // 16MB（默认 768KB）
+		MaxConnectionReceiveWindow:     64 * 1024 * 1024,  // 64MB（默认 15MB）
 	}
 
 	ln, err := quic.ListenAddr(s.cfg.Listen.QUIC.Addr, tlsConfig, quicConfig)
@@ -129,9 +135,15 @@ func (s *Server) startQUICObfs() error {
 	}
 
 	quicConfig := &quic.Config{
-		MaxIdleTimeout:       5 * time.Minute,
-		KeepAlivePeriod:      15 * time.Second,
-		HandshakeIdleTimeout: 15 * time.Second,
+		MaxIdleTimeout:                 5 * time.Minute,
+		KeepAlivePeriod:                15 * time.Second,
+		HandshakeIdleTimeout:           15 * time.Second,
+		MaxIncomingStreams:              1024,
+		MaxIncomingUniStreams:           1024,
+		InitialStreamReceiveWindow:     4 * 1024 * 1024,  // 4MB（默认 512KB）
+		MaxStreamReceiveWindow:         16 * 1024 * 1024,  // 16MB（默认 6MB）
+		InitialConnectionReceiveWindow: 16 * 1024 * 1024,  // 16MB（默认 768KB）
+		MaxConnectionReceiveWindow:     64 * 1024 * 1024,  // 64MB（默认 15MB）
 	}
 
 	// 创建 UDP 监听

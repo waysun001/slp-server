@@ -11,6 +11,22 @@ import (
 	"github.com/smartlink/slp-server/internal/protocol"
 )
 
+// copyBufPool 64KB 池化缓冲区，减少 io.Copy 系统调用开销
+var copyBufPool = sync.Pool{
+	New: func() interface{} {
+		buf := make([]byte, 64*1024)
+		return &buf
+	},
+}
+
+func getCopyBuf() []byte {
+	return *(copyBufPool.Get().(*[]byte))
+}
+
+func putCopyBuf(buf []byte) {
+	copyBufPool.Put(&buf)
+}
+
 // Dialer 带出口 IP 的拨号器
 type Dialer struct {
 	OutboundIP string
@@ -19,7 +35,7 @@ type Dialer struct {
 // Dial 使用指定出口 IP 连接目标
 func (d *Dialer) Dial(network, address string) (net.Conn, error) {
 	var localAddr net.Addr
-	
+
 	if d.OutboundIP != "" {
 		switch network {
 		case "tcp", "tcp4", "tcp6":
@@ -28,13 +44,25 @@ func (d *Dialer) Dial(network, address string) (net.Conn, error) {
 			localAddr = &net.UDPAddr{IP: net.ParseIP(d.OutboundIP)}
 		}
 	}
-	
+
 	dialer := &net.Dialer{
 		LocalAddr: localAddr,
 		Timeout:   10 * time.Second,
 	}
-	
-	return dialer.Dial(network, address)
+
+	conn, err := dialer.Dial(network, address)
+	if err != nil {
+		return nil, err
+	}
+
+	// TCP 连接调优：禁用 Nagle、增大 socket 缓冲区
+	if tc, ok := conn.(*net.TCPConn); ok {
+		tc.SetNoDelay(true)
+		tc.SetReadBuffer(2 * 1024 * 1024)  // 2MB
+		tc.SetWriteBuffer(2 * 1024 * 1024) // 2MB
+	}
+
+	return conn, nil
 }
 
 // TCPProxy 处理 TCP 代理转发
@@ -60,7 +88,9 @@ func TCPProxy(clientConn io.ReadWriteCloser, targetAddr string, targetPort uint1
 	// client -> target
 	go func() {
 		defer wg.Done()
-		io.Copy(targetConn, clientConn)
+		buf := getCopyBuf()
+		io.CopyBuffer(targetConn, clientConn, buf)
+		putCopyBuf(buf)
 		if tc, ok := targetConn.(*net.TCPConn); ok {
 			tc.CloseWrite()
 		}
@@ -69,7 +99,9 @@ func TCPProxy(clientConn io.ReadWriteCloser, targetAddr string, targetPort uint1
 	// target -> client
 	go func() {
 		defer wg.Done()
-		io.Copy(clientConn, targetConn)
+		buf := getCopyBuf()
+		io.CopyBuffer(clientConn, targetConn, buf)
+		putCopyBuf(buf)
 	}()
 
 	wg.Wait()
@@ -180,7 +212,9 @@ func (p *StreamProxy) copyToTarget() {
 		reader = &idleTimeoutReader{reader: p.stream, setDeadline: dl.SetReadDeadline, timeout: idleTimeout}
 	}
 
-	_, err := io.Copy(p.targetConn, reader)
+	buf := getCopyBuf()
+	_, err := io.CopyBuffer(p.targetConn, reader, buf)
+	putCopyBuf(buf)
 	if err != nil {
 		log.Printf("copy to target error: %v", err)
 	}
@@ -200,7 +234,9 @@ func (p *StreamProxy) copyFromTarget() {
 		timeout:     idleTimeout,
 	}
 
-	_, err := io.Copy(p.stream, reader)
+	buf := getCopyBuf()
+	_, err := io.CopyBuffer(p.stream, reader, buf)
+	putCopyBuf(buf)
 	if err != nil {
 		log.Printf("copy from target error: %v", err)
 	}
