@@ -155,18 +155,20 @@ func (p *StreamProxy) Start() {
 	go func() {
 		defer wg.Done()
 		p.copyToTarget()
-		// 当一个方向结束时，关闭所有连接以唤醒另一个方向
-		// 防止对端已断开但本端仍阻塞等待 60s idle timeout
-		p.Close()
+		// copyToTarget 只做 CloseWrite（半关闭）
+		// target 收到 FIN 后完成发送 → copyFromTarget 自然结束
+		// 不能在此调用 p.Close()，否则会杀死正在读响应的 copyFromTarget
 	}()
 
 	go func() {
 		defer wg.Done()
 		p.copyFromTarget()
-		p.Close()
+		// copyFromTarget 结束后关闭 stream → 唤醒 copyToTarget
 	}()
 
 	wg.Wait()
+	// 双向都结束后确保资源完全释放（防止 targetConn 泄漏）
+	p.Close()
 }
 
 func (p *StreamProxy) copyToTarget() {
